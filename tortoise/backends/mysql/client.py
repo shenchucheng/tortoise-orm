@@ -1,5 +1,6 @@
 import asyncio
 from functools import wraps
+import os
 from typing import Any, Callable, List, Optional, SupportsInt, Tuple, TypeVar, Union
 
 try:
@@ -112,7 +113,6 @@ class MySQLClient(BaseDBAsyncClient):
         }
         try:
             self._pool = await mysql.create_pool(password=self.password, **self._template)
-
             if isinstance(self._pool, mysql.Pool):
                 async with self.acquire_connection() as connection:
                     async with connection.cursor() as cursor:
@@ -122,9 +122,14 @@ class MySQLClient(BaseDBAsyncClient):
                             )
                             if self.storage_engine.lower() != "innodb":  # pragma: nobranch
                                 self.capabilities.__dict__["supports_transactions"] = False
-                        hours = timezone.now().utcoffset().seconds / 3600  # type: ignore
-                        tz = "{:+d}:{:02d}".format(int(hours), int((hours % 1) * 60))
-                        await cursor.execute(f"SET SESSION time_zone='{tz}';")
+                        try:
+                            await cursor.execute(f"SET SESSION time_zone='{os.environ['TZ']}';")
+                        except:
+                            total_minutes = timezone.now().utcoffset().total_seconds() / 60  # type: ignore
+                            sign = "+" if total_minutes >= 0 else "-"
+                            hours, minutes = divmod(abs(total_minutes), 60)
+                            tz = "{}{:02d}:{:02d}".format(sign, int(hours), int(minutes))
+                            await cursor.execute(f"SET SESSION time_zone='{tz}';")
             self.log.debug("Created connection %s pool with params: %s", self._pool, self._template)
         except errors.OperationalError:
             raise DBConnectionError(f"Can't connect to MySQL server: {self._template}")
